@@ -132,15 +132,23 @@ function findBy(pred) {
   // 定位控件
   const urlNode = findBy((n) => n.tagName === 'input' && n.placeholder === 'https://example.com/v1/images/generations')
   const keyNode = findBy((n) => n.tagName === 'input' && n.type === 'password')
-  const modelNode = findBy((n) => n.tagName === 'input' && n.placeholder === 'model（如 dall-e-3）')
-  const sizeNode = findBy((n) => n.tagName === 'input' && n.placeholder === 'size（如 1024x1024）')
+  const modelNode = findBy((n) => n.tagName === 'input' && n.placeholder === '选择或输入模型（如 dall-e-3）')
+  const sizeSelect = findBy(
+    (n) => n.tagName === 'select' && (n.children || []).some((o) => o.value === 'custom'),
+  )
+  const positionSelect = findBy(
+    (n) => n.tagName === 'select' && (n.children || []).some((o) => o.textContent === '正文底部'),
+  )
+  const countSelect = findBy(
+    (n) => n.tagName === 'select' && (n.children || []).some((o) => o.textContent === '1 张'),
+  )
   const tplNode = findBy((n) => n.tagName === 'textarea')
   const chkNode = findBy((n) => n.tagName === 'input' && n.type === 'checkbox')
-  const numNode = findBy((n) => n.tagName === 'input' && n.type === 'number')
-  const selNode = findBy((n) => n.tagName === 'select')
+  const ctxCountNode = findBy((n) => n.tagName === 'input' && n.type === 'number' && n.min === '1' && n.max === '50')
+  const countCustomNode = findBy((n) => n.tagName === 'input' && n.type === 'number' && n.max === '20')
 
   assert(
-    urlNode && keyNode && modelNode && sizeNode && tplNode && chkNode && numNode && selNode,
+    urlNode && keyNode && modelNode && sizeSelect && positionSelect && countSelect && tplNode && chkNode && ctxCountNode && countCustomNode,
     '定位到全部表单控件',
   )
 
@@ -153,10 +161,13 @@ function findBy(pred) {
     protocol: 'openai',
     apiKey: 'sk-saved-key',
     model: 'dall-e-3-saved',
+    models: ['dall-e-3-saved', 'dall-e-2'],
     size: '512x512',
     promptTemplate: '{{char}} 已保存模板',
     includeContext: false,
     contextCount: 3,
+    insertPosition: 'top',
+    count: 3,
   })
 
   // 3. 时机 2：APP_READY 触发 syncFormFromSettings
@@ -164,11 +175,12 @@ function findBy(pred) {
   assert(urlNode.value === 'https://saved.example.com/v1/images/generations', 'APP_READY 回填 apiUrl')
   assert(keyNode.value === 'sk-saved-key', 'APP_READY 回填 apiKey')
   assert(modelNode.value === 'dall-e-3-saved', 'APP_READY 回填 model')
-  assert(sizeNode.value === '512x512', 'APP_READY 回填 size')
+  assert(sizeSelect.value === '512x512', 'APP_READY 回填 size（select 选中预设）')
   assert(tplNode.value === '{{char}} 已保存模板', 'APP_READY 回填 promptTemplate')
   assert(chkNode.checked === false, 'APP_READY 回填 includeContext=false')
-  assert(numNode.value === '3', 'APP_READY 回填 contextCount=3')
-  assert(selNode.value === 'openai', 'APP_READY 回填 protocol')
+  assert(ctxCountNode.value === '3', 'APP_READY 回填 contextCount=3')
+  assert(positionSelect.value === 'top', 'APP_READY 回填 insertPosition=top')
+  assert(countSelect.value === '3', 'APP_READY 回填 count=3')
 
   // 4. 时机 3：setTimeout 兜底（幂等，多次调用结果一致）
   timeoutFn()

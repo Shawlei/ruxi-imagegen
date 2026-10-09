@@ -98,6 +98,19 @@
   border-color: #1a1a18;
 }
 
+.ruxi-ig__btn--small {
+  flex: none;
+  padding: 8px 12px;
+  margin-top: 0;
+  margin-right: 0;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.ruxi-ig__sub {
+  margin-top: 6px;
+}
+
 .ruxi-ig__btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;

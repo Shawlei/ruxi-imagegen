@@ -17,11 +17,16 @@
     apiUrl: '',
     protocol: 'auto', // auto | openai | generic
     apiKey: '',
-    model: '',
-    size: '1024x1024',
-    promptTemplate: '{{char}} 的插画，高质量，细节丰富',
+    model: '', // 当前模型（可从下拉选择或自定义输入）
+    models: [], // 「拉取模型」拉到的模型列表（持久化，供下拉建议）
+    size: '1024x1024', // 预设尺寸；'custom' 表示使用 customSize
+    customSize: '', // 自定义尺寸（size==='custom' 时生效）
+    promptTemplate:
+      '{{char}} 的精美插画，高质量，细节丰富，光影自然，构图精致，画风唯美，色彩和谐',
     includeContext: true,
     contextCount: 6,
+    insertPosition: 'bottom', // bottom | top | middle（图文插入正文的位置）
+    count: 1, // 生成张数（默认 1，最高 5，或自定义）
   }
   var settings = extension_settings || {}
   Object.keys(DEFAULTS).forEach(function (k) {
@@ -33,7 +38,7 @@
 
   // ---- 运行态 ----
   var state = {
-    last: null, // 规范化后的图片 { url, dataUrl, bytes }
+    images: [], // 规范化后的图片数组 [{ url, dataUrl, bytes }]
     generating: false,
   }
 
@@ -74,9 +79,47 @@
     return 'generic'
   }
 
-  /** 从响应 payload 提取图片：返回 { kind: 'url'|'b64'|'dataUrl', value } 或 null */
-  function extractImageFromPayload(payload) {
-    if (payload == null) return null
+  /** 尺寸预设（第一项 custom 表示自定义尺寸） */
+  var SIZE_PRESETS = [
+    'custom',
+    '1024x1024',
+    '1024x1792',
+    '1792x1024',
+    '512x512',
+    '768x1024',
+    '1024x768',
+  ]
+
+  /** 解析最终尺寸：custom → customSize；空 → 缺省 1024x1024 */
+  function resolveSize(s) {
+    var size = String((s && s.size) || '').trim()
+    if (size === 'custom') return String((s && s.customSize) || '').trim() || '1024x1024'
+    return size || '1024x1024'
+  }
+
+  /** 解析最终张数：1–20 之间，非法/小于 1 → 1 */
+  function resolveCount(s) {
+    var n = parseInt(s && s.count, 10)
+    if (!isFinite(n) || n < 1) n = 1
+    return Math.min(n, 20)
+  }
+
+  /** 从生图 URL 推导模型列表接口 base（去掉 /images/generations 或末段路径） */
+  function modelsBaseUrl(url) {
+    var u = String(url || '').trim()
+    if (!u) return ''
+    u = u.replace(/[?#].*$/, '')
+    var m = u.replace(/\/images\/generations\/?$/i, '')
+    if (m !== u) return m.replace(/\/+$/, '')
+    var seg = u.split('/')
+    if (seg.length > 3) seg.pop()
+    return seg.join('/').replace(/\/+$/, '')
+  }
+
+  /** 从响应 payload 提取全部图片：返回 [{ kind: 'url'|'b64'|'dataUrl', value }]（可能为空数组） */
+  function extractImagesFromPayload(payload) {
+    if (payload == null) return []
+    var out = []
 
     // 1) OpenAI images/generations：{ data: [ { url | b64_json } ] }
     if (typeof payload === 'object' && !Array.isArray(payload)) {
@@ -85,24 +128,34 @@
           var item = payload.data[i]
           if (!item || typeof item !== 'object') continue
           var u = item.url
-          if (typeof u === 'string' && /^https?:\/\//i.test(u.trim())) return { kind: 'url', value: u.trim() }
-          var b = item.b64_json
-          if (typeof b === 'string' && b.trim()) return { kind: 'b64', value: b.trim() }
+          if (typeof u === 'string' && /^https?:\/\//i.test(u.trim())) {
+            out.push({ kind: 'url', value: u.trim() })
+          } else {
+            var b = item.b64_json
+            if (typeof b === 'string' && b.trim()) out.push({ kind: 'b64', value: b.trim() })
+          }
         }
+        if (out.length) return out
       }
     }
 
     // 2) 通用：在字符串形态里扫描 dataURL 或 http(s) 图片 URL
     var str = typeof payload === 'string' ? payload : JSON.stringify(payload)
-    if (!str) return null
+    if (!str) return out
 
     var mData = str.match(/data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/)
-    if (mData) return { kind: 'dataUrl', value: mData[0].trim() }
+    if (mData) out.push({ kind: 'dataUrl', value: mData[0].trim() })
 
     var mUrl = str.match(/https?:\/\/[^\s"'\\<>]+?\.(?:png|jpe?g|webp|gif)(?:\?[^\s"'\\<>]*)?/i)
-    if (mUrl) return { kind: 'url', value: mUrl[0] }
+    if (mUrl) out.push({ kind: 'url', value: mUrl[0] })
 
-    return null
+    return out
+  }
+
+  /** 从响应 payload 提取第一张图片：返回 { kind, value } 或 null（兼容旧签名） */
+  function extractImageFromPayload(payload) {
+    var arr = extractImagesFromPayload(payload)
+    return arr.length ? arr[0] : null
   }
 
   /** dataURL 近似字节数（base64 长度 × 3/4） */
@@ -141,8 +194,8 @@
     }
   }
 
-  /** 生图请求（自包含：仅依赖全局 fetch / encodeURIComponent） */
-  async function requestImage(url, protocol, prompt, s) {
+  /** 生图请求（自包含：仅依赖全局 fetch / encodeURIComponent）。n 为生成张数（OpenAI 协议生效） */
+  async function requestImage(url, protocol, prompt, s, n) {
     var key = (s.apiKey || '').trim()
     var jsonHeaders = { 'Content-Type': 'application/json' }
     if (key) jsonHeaders['Authorization'] = 'Bearer ' + key
@@ -151,8 +204,8 @@
       var body = {
         model: (s.model || '').trim() || 'dall-e-3',
         prompt: prompt,
-        n: 1,
-        size: (s.size || '').trim() || '1024x1024',
+        n: n || 1,
+        size: resolveSize(s),
       }
       var res = await fetch(url, {
         method: 'POST',
@@ -183,6 +236,30 @@
     }
   }
 
+  /** 拉取模型列表：从生图 URL 推导 base 后请求 {base}/models，返回模型 id 数组（失败抛错） */
+  async function requestModels(url, s) {
+    var base = modelsBaseUrl(url)
+    if (!base) throw new Error('无法从接口 URL 推导模型列表地址')
+    var key = (s.apiKey || '').trim()
+    var headers = {}
+    if (key) headers['Authorization'] = 'Bearer ' + key
+    var res = await fetch(base + '/models', { method: 'GET', headers: headers })
+    if (!res.ok) throw new Error('HTTP ' + res.status)
+    var data = await parseBody(res)
+    var ids = []
+    if (data && typeof data === 'object' && !Array.isArray(data) && Array.isArray(data.data)) {
+      data.data.forEach(function (m) {
+        if (m && typeof m.id === 'string') ids.push(m.id)
+      })
+    } else if (Array.isArray(data)) {
+      data.forEach(function (m) {
+        if (typeof m === 'string') ids.push(m)
+        else if (m && typeof m.id === 'string') ids.push(m.id)
+      })
+    }
+    return ids
+  }
+
   // ==PURE_END==
   // ============================================================
 
@@ -202,6 +279,7 @@
         else if (k === 'max') node.setAttribute('max', attrs[k])
         else if (k === 'type') node.setAttribute('type', attrs[k])
         else if (k === 'title') node.setAttribute('title', attrs[k])
+        else if (k === 'style') node.style.cssText = attrs[k]
         else node.setAttribute(k, attrs[k])
       })
     }
@@ -263,6 +341,50 @@
     if (node.checked !== b) node.checked = b
   }
 
+  function setDisplay(node, show) {
+    if (!node) return
+    node.style.display = show ? '' : 'none'
+  }
+
+  /** 是否正在编辑某字段（焦点落在其自身或关联控件上） */
+  function anyFocused(nodes) {
+    return (nodes || []).some(function (n) {
+      return isFocused(n)
+    })
+  }
+
+  // ---- 模型下拉（datalist 建议 + 自由输入）----
+  function fillModelOptions() {
+    if (!els.modelList) return
+    els.modelList.textContent = ''
+    var list = Array.isArray(settings.models) ? settings.models : []
+    var seen = {}
+    list.forEach(function (id) {
+      var v = String(id || '')
+      if (!v || seen[v]) return
+      seen[v] = true
+      var o = el('option', { value: v })
+      els.modelList.appendChild(o)
+    })
+  }
+
+  // ---- 尺寸 / 张数 联动 UI ----
+  function updateSizeUI() {
+    var s = settings.size
+    var isCustom = s === 'custom'
+    els.size.value = SIZE_PRESETS.indexOf(s) >= 0 ? s : 'custom'
+    setDisplay(els.customSizeWrap, isCustom)
+    if (!isFocused(els.customSize)) setText(els.customSize, settings.customSize)
+  }
+
+  function updateCountUI() {
+    var c = resolveCount(settings)
+    var preset = c >= 1 && c <= 5
+    els.count.value = preset ? String(c) : 'custom'
+    setDisplay(els.countCustomWrap, !preset)
+    if (!isFocused(els.countCustom)) setText(els.countCustom, preset ? '' : c)
+  }
+
   /**
    * 把当前 settings 写回表单控件（幂等，可安全多次调用）。
    * settings 引用 EXT_SETTINGS_CACHE 的同一对象：boot 的 getSettings 异步回填会
@@ -275,10 +397,13 @@
     setText(els.protocol, s.protocol)
     setText(els.key, s.apiKey)
     setText(els.model, s.model)
-    setText(els.size, s.size)
+    fillModelOptions()
     setText(els.template, s.promptTemplate)
     setChecked(els.includeContext, s.includeContext)
     setText(els.contextCount, s.contextCount)
+    setText(els.insertPosition, s.insertPosition)
+    updateSizeUI()
+    updateCountUI()
   }
 
   // ---- 面板 UI ----
@@ -323,30 +448,61 @@
       persist()
     })
 
-    var modelRow = el('div', { class: 'ruxi-ig__row' })
+    // 模型：下拉建议（datalist）+ 自由输入，旁挂「拉取模型」按钮
+    els.modelList = el('datalist', { id: 'ruxi-ig-models' })
     els.model = el('input', {
       type: 'text',
       class: 'ruxi-ig__input',
       value: settings.model,
-      placeholder: 'model（如 dall-e-3）',
+      placeholder: '选择或输入模型（如 dall-e-3）',
     })
+    els.model.setAttribute('list', 'ruxi-ig-models')
     els.model.addEventListener('input', function () {
       settings.model = els.model.value
       persist()
     })
-    els.size = el('input', {
+    els.fetchModels = el('button', {
+      type: 'button',
+      class: 'ruxi-ig__btn ruxi-ig__btn--small',
+      text: '拉取模型',
+    })
+    els.fetchModels.addEventListener('click', onFetchModels)
+    var modelRow = el('div', { class: 'ruxi-ig__row' })
+    modelRow.appendChild(els.model)
+    modelRow.appendChild(els.fetchModels)
+    modelRow.appendChild(els.modelList)
+
+    // 尺寸：预设下拉（第一项自定义）+ 自定义输入框
+    els.size = el('select', { class: 'ruxi-ig__input' })
+    SIZE_PRESETS.forEach(function (v) {
+      var label = v === 'custom' ? '自定义尺寸' : v
+      var o = el('option', { text: label })
+      o.value = v
+      els.size.appendChild(o)
+    })
+    els.size.addEventListener('change', function () {
+      if (els.size.value === 'custom') {
+        if (settings.size !== 'custom') settings.size = 'custom'
+      } else {
+        settings.size = els.size.value
+      }
+      persist()
+      updateSizeUI()
+    })
+    els.customSize = el('input', {
       type: 'text',
       class: 'ruxi-ig__input',
-      value: settings.size,
-      placeholder: 'size（如 1024x1024）',
+      value: settings.customSize,
+      placeholder: '如 1024x1536',
     })
-    els.size.addEventListener('input', function () {
-      settings.size = els.size.value
+    els.customSize.addEventListener('input', function () {
+      settings.customSize = els.customSize.value
       persist()
     })
-    modelRow.appendChild(els.model)
-    modelRow.appendChild(els.size)
+    els.customSizeWrap = el('div', { class: 'ruxi-ig__sub', style: 'display:none' })
+    els.customSizeWrap.appendChild(els.customSize)
 
+    // Prompt 模板
     els.template = el('textarea', {
       class: 'ruxi-ig__textarea',
       rows: 4,
@@ -382,6 +538,62 @@
     ctxRow.appendChild(check)
     ctxRow.appendChild(els.contextCount)
 
+    // 图文插入位置
+    els.insertPosition = el('select', { class: 'ruxi-ig__input' })
+    ;[
+      ['bottom', '正文底部'],
+      ['top', '正文顶部'],
+      ['middle', '正文中间'],
+    ].forEach(function (p) {
+      var o = el('option', { text: p[1] })
+      o.value = p[0]
+      if (settings.insertPosition === p[0]) o.selected = true
+      els.insertPosition.appendChild(o)
+    })
+    els.insertPosition.addEventListener('change', function () {
+      settings.insertPosition = els.insertPosition.value
+      persist()
+    })
+
+    // 张数：1–5 预设 + 自定义
+    els.count = el('select', { class: 'ruxi-ig__input' })
+    ;[1, 2, 3, 4, 5].forEach(function (n) {
+      var o = el('option', { text: n + ' 张' })
+      o.value = String(n)
+      els.count.appendChild(o)
+    })
+    ;(function () {
+      var o = el('option', { text: '自定义' })
+      o.value = 'custom'
+      els.count.appendChild(o)
+    })()
+    els.count.addEventListener('change', function () {
+      if (els.count.value === 'custom') {
+        if (settings.count < 1 || settings.count > 5) {
+          settings.count = Math.max(1, Math.min(20, settings.count || 5))
+        }
+      } else {
+        settings.count = parseInt(els.count.value, 10)
+      }
+      persist()
+      updateCountUI()
+    })
+    els.countCustom = el('input', {
+      type: 'number',
+      class: 'ruxi-ig__num',
+      value: settings.count > 5 ? settings.count : '',
+      min: 1,
+      max: 20,
+      placeholder: '张数',
+    })
+    els.countCustom.addEventListener('input', function () {
+      var n = parseInt(els.countCustom.value, 10)
+      settings.count = isFinite(n) ? Math.max(1, Math.min(20, n)) : 1
+      persist()
+    })
+    els.countCustomWrap = el('div', { class: 'ruxi-ig__sub', style: 'display:none' })
+    els.countCustomWrap.appendChild(els.countCustom)
+
     els.generate = el('button', {
       type: 'button',
       class: 'ruxi-ig__btn ruxi-ig__btn--primary',
@@ -402,7 +614,7 @@
       text: '插入对话',
       disabled: true,
     })
-    els.insert.addEventListener('click', insertImage)
+    els.insert.addEventListener('click', insertImages)
 
     var head = el('div', { class: 'ruxi-ig__title', text: '入戏生图' })
 
@@ -411,9 +623,14 @@
       labeled('生图接口 URL', els.url),
       labeled('接口协议', els.protocol),
       labeled('API Key（可选）', els.key),
-      labeled('模型 / 尺寸（OpenAI 协议）', modelRow),
+      labeled('模型（OpenAI 协议）', modelRow),
+      labeled('尺寸', els.size),
+      els.customSizeWrap,
       labeled('Prompt 模板（支持 {{char}} / {{user}}）', els.template),
       ctxRow,
+      labeled('图文插入位置', els.insertPosition),
+      labeled('生成张数', els.count),
+      els.countCustomWrap,
       els.generate,
       els.status,
       els.previewWrap,
@@ -423,6 +640,34 @@
     })
 
     document.body.appendChild(root)
+  }
+
+  // ---- 拉取模型 ----
+  async function onFetchModels() {
+    var url = (settings.apiUrl || '').trim()
+    if (!url) {
+      showStatus('未配置接口', true)
+      return
+    }
+    els.fetchModels.disabled = true
+    els.fetchModels.textContent = '拉取中…'
+    showStatus('拉取模型列表…')
+    try {
+      var ids = await requestModels(url, settings)
+      if (!ids || ids.length === 0) {
+        showStatus('未拉到模型（接口可能不支持 /models 列表）', true)
+        return
+      }
+      settings.models = ids
+      persist()
+      fillModelOptions()
+      showStatus('已拉到 ' + ids.length + ' 个模型，可从下拉选择')
+    } catch (e) {
+      showStatus('拉取模型失败：' + (e && e.message ? e.message : e), true)
+    } finally {
+      els.fetchModels.disabled = false
+      els.fetchModels.textContent = '拉取模型'
+    }
   }
 
   // ---- 生图 ----
@@ -442,6 +687,7 @@
       return
     }
     var protocol = resolveProtocol(url, settings.protocol)
+    var count = resolveCount(settings)
 
     var ctx
     try {
@@ -460,18 +706,30 @@
     setGenerating(true)
     showStatus('生成中…')
     try {
-      var payload = await requestImage(url, protocol, prompt, settings)
-      var img = normalizeImage(extractImageFromPayload(payload))
-      if (!img) throw new Error('未能从响应中提取到图片（URL 或 base64）')
+      var images = []
+      if (protocol === 'openai') {
+        // OpenAI：body.n = count，一次请求，data 数组里取全部
+        var payload = await requestImage(url, protocol, prompt, settings, count)
+        images = extractImagesFromPayload(payload).map(normalizeImage).filter(Boolean)
+      } else {
+        // 通用：循环 count 次，每次一张
+        for (var i = 0; i < count; i++) {
+          var p = await requestImage(url, protocol, prompt, settings, 1)
+          var img = normalizeImage(extractImageFromPayload(p))
+          if (img) images.push(img)
+        }
+      }
 
-      state.last = img
-      els.preview.src = img.dataUrl
+      if (!images.length) throw new Error('未能从响应中提取到图片（URL 或 base64）')
+
+      state.images = images
+      els.preview.src = images[0].dataUrl
       els.previewWrap.style.display = 'block'
       els.insert.disabled = false
-      showStatus('生成成功')
+      showStatus('生成成功（' + images.length + ' 张）')
 
-      // 生成成功后自动插一次；手动「插入对话」可再插一次
-      await insertImage()
+      // 生成成功后自动插入正文；手动「插入对话」可再插一次
+      await insertImages()
     } catch (e) {
       showStatus('出错：' + (e && e.message ? e.message : e), true)
     } finally {
@@ -480,23 +738,26 @@
   }
 
   // ---- 插入正文 ----
-  async function insertImage() {
-    var img = state.last
-    if (!img) {
+  async function insertImages() {
+    var imgs = state.images
+    if (!imgs || imgs.length === 0) {
       showStatus('还没有可插入的图片', true)
       return
     }
-    var markdown
-    if (img.url) {
-      markdown = '![' + '图片' + '](' + img.url + ')'
-    } else {
+    var parts = imgs.map(function (img) {
+      if (img.url) return '![' + '图片' + '](' + img.url + ')'
       if (img.bytes > 1024 * 1024) {
         toast('图片为 dataURL 且超过 1MB，无外链可用，仍以 dataURL 插入（可能较占存储）', 'warning')
       }
-      markdown = '![' + '图片' + '](' + img.dataUrl + ')'
-    }
+      return '![' + '图片' + '](' + img.dataUrl + ')'
+    })
+    var markdown = parts.join('\n')
     try {
-      await API.addOneMessage({ role: 'assistant', content: markdown })
+      await API.addOneMessage({
+        role: 'assistant',
+        content: markdown,
+        position: settings.insertPosition || 'bottom',
+      })
       showStatus('已插入对话')
     } catch (e) {
       showStatus('插入失败：' + (e && e.message ? e.message : e), true)

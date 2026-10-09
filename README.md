@@ -10,11 +10,14 @@
    - **生图接口 URL**：留空时点「生成」会提示「未配置接口」。
    - **接口协议**：`自动`（按 URL 判断）/ `OpenAI images/generations` / `通用`。
    - **API Key**：可选，明文输入框（`type=password`）。留空则不发送 `Authorization` 头。
-   - **模型 / 尺寸**：OpenAI 协议用；留空时模型回退 `dall-e-3`、尺寸回退 `1024x1024`。
-   - **Prompt 模板**：多行文本，支持 `{{char}}` / `{{user}}` 占位符。
+   - **模型**：下拉建议（`datalist`）+ 自由输入。点旁边的「拉取模型」会从接口 `/models` 拉取可用模型列表填入下拉（OpenAI 协议最常用；通用接口若支持 `/models` 亦可）。
+   - **尺寸**：预设下拉（第一项「自定义尺寸」，选自定义后才出现输入框）。预设含 `1024x1024` / `1024x1792` / `1792x1024` / `512x512` / `768x1024` / `1024x768`。
+   - **Prompt 模板**：多行文本，支持 `{{char}}` / `{{user}}` 占位符（已内置一套默认提示词）。
    - **附上最近对话上下文**：默认开启，默认取最近 6 条，可调（1–50）。
-4. 点「生成」→ 显示 loading → 成功后在面板内预览缩略图，并**自动插入一次**对话正文。
-   「插入对话」按钮可在生成成功后**再插一次**。
+   - **图文插入位置**：正文底部 / 顶部 / 中间，控制生成后图片插入到对话正文的哪一处。
+   - **生成张数**：1–5 张预设，或选「自定义」输入任意张数（1–20；OpenAI 协议一次请求 `n` 张，通用协议循环多次）。
+4. 点「生成」→ 显示 loading → 成功后在面板内预览缩略图，并**自动插入**到指定位置的对话正文。
+   「插入对话」按钮可在生成成功后**再插一次**（同样按「图文插入位置」插入）。
 
 ## manifest 字段
 
@@ -31,10 +34,10 @@
 `POST` JSON，请求头 `Authorization: Bearer <你的KEY>`：
 
 ```json
-{ "model": "dall-e-3", "prompt": "...", "n": 1, "size": "1024x1024" }
+{ "model": "dall-e-3", "prompt": "...", "n": 3, "size": "1024x1024" }
 ```
 
-从响应 `data[0].url`（URL）或 `data[0].b64_json`（base64）取图。`b64_json` 会转成 `data:image/png;base64,...`。
+`n` 为生成张数（1–20）。从响应 `data[]` 逐条取图（`url` 或 `b64_json`）。`b64_json` 会转成 `data:image/png;base64,...`。
 
 ### b) 通用（返回图片 URL 或 dataURL 的任意接口）
 
@@ -54,6 +57,8 @@
 
 - 图片是外链 URL → 直接插入 `![图片](url)`。
 - 图片是 dataURL 且约 > 1MB → 无外链可用时仍以 dataURL 插入，但给提示（避免撑爆 IndexedDB 时优先外链）。
+- 多张图片 → 合并成一条 assistant 消息（多个 `![图片](...)` 用换行分隔），整体按「图文插入位置」插入正文。
+- 插入位置（`API.addOneMessage({ position })`）由宿主支持：`bottom`（追加末尾，默认）/ `top`（正文最前）/ `middle`（正文中间）。
 
 ## 宿主 API 挂载方式（核对要点）
 
@@ -87,4 +92,4 @@ node scripts/integration.test.js   # 本地 mock 服务端到端（OpenAI / 通�
 node scripts/refill.test.js        # 设置回填时序（getSettings 异步回填 → 表单回填）
 ```
 
-`selftest.js` 核对 manifest 入口解析、入口脚本对宿主 API 的调用写法、以及纯函数区（占位符替换 / 协议判定 / 图片提取 / base64 归一化）对固定输入的输出；`refill.test.js` 真正执行 `index.js`，模拟「boot 先渲染（settings 为空）→ getSettings 异步回填 → APP_READY / 300ms 兜底触发 `syncFormFromSettings`」的时序，断言表单控件值回填正确且不打断正在编辑的字段。
+`selftest.js` 核对 manifest 入口解析、入口脚本对宿主 API 的调用写法、以及纯函数区（占位符替换 / 协议判定 / 尺寸张数解析 / 图片提取 / base64 归一化）对固定输入的输出；`refill.test.js` 真正执行 `index.js`，模拟「boot 先渲染（settings 为空）→ getSettings 异步回填 → APP_READY / 300ms 兜底触发 `syncFormFromSettings`」的时序，断言表单控件值回填正确且不打断正在编辑的字段。

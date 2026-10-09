@@ -103,7 +103,7 @@ if (sIdx >= 0 && eIdx > sIdx) {
   try {
     const factory = new Function(
       pureCode +
-        '\nreturn { substituteTemplate: substituteTemplate, buildContextText: buildContextText, resolveProtocol: resolveProtocol, extractImageFromPayload: extractImageFromPayload, dataUrlApproxBytes: dataUrlApproxBytes, normalizeImage: normalizeImage };',
+        '\nreturn { substituteTemplate: substituteTemplate, buildContextText: buildContextText, resolveProtocol: resolveProtocol, resolveSize: resolveSize, resolveCount: resolveCount, modelsBaseUrl: modelsBaseUrl, extractImagesFromPayload: extractImagesFromPayload, extractImageFromPayload: extractImageFromPayload, dataUrlApproxBytes: dataUrlApproxBytes, normalizeImage: normalizeImage };',
     )
     fns = factory()
     assert(true, '纯函数区可独立编译执行')
@@ -137,6 +137,24 @@ if (fns) {
   assert(fns.resolveProtocol('https://api.openai.com/v1/images/generations', 'auto') === 'openai', 'auto 识别 openai 域名 → openai')
   assert(fns.resolveProtocol('https://x/api/draw', 'auto') === 'generic', 'auto 其它 URL → generic')
   assert(fns.resolveProtocol('https://x/api/draw', 'openai') === 'openai', '显式 openai 覆盖')
+
+  // resolveSize / resolveCount / modelsBaseUrl
+  assert(fns.resolveSize({ size: '1024x1792' }) === '1024x1792', 'resolveSize 预设原样返回')
+  assert(fns.resolveSize({ size: 'custom', customSize: '1024x1536' }) === '1024x1536', 'resolveSize custom → customSize')
+  assert(fns.resolveSize({ size: 'custom', customSize: '' }) === '1024x1024', 'resolveSize custom 空 → 缺省 1024x1024')
+  assert(fns.resolveSize({ size: '' }) === '1024x1024', 'resolveSize 空 → 缺省 1024x1024')
+  assert(fns.resolveCount({ count: 3 }) === 3, 'resolveCount 预设张数')
+  assert(fns.resolveCount({ count: 7 }) === 7, 'resolveCount 自定义张数')
+  assert(fns.resolveCount({ count: 0 }) === 1, 'resolveCount 非法 → 1')
+  assert(fns.resolveCount({ count: 999 }) === 20, 'resolveCount 超上限 → 20')
+  assert(fns.modelsBaseUrl('https://api.openai.com/v1/images/generations') === 'https://api.openai.com/v1', 'modelsBaseUrl 去掉 /images/generations')
+  assert(fns.modelsBaseUrl('https://x.com/api/draw') === 'https://x.com/api', 'modelsBaseUrl 去掉末段路径')
+
+  // extractImagesFromPayload — 多图提取
+  const m1 = fns.extractImagesFromPayload({ data: [{ url: 'https://cdn.x/a.png' }, { url: 'https://cdn.x/b.png' }] })
+  assert(m1.length === 2 && m1[0].value === 'https://cdn.x/a.png' && m1[1].value === 'https://cdn.x/b.png', 'extractImagesFromPayload 提取 OpenAI data 多张')
+  const m2 = fns.extractImagesFromPayload({ data: [] })
+  assert(Array.isArray(m2) && m2.length === 0, 'extractImagesFromPayload 空 data → 空数组')
 
   // extractImageFromPayload — OpenAI 格式
   const e1 = fns.extractImageFromPayload({ data: [{ url: 'https://cdn.x/a.png' }] })
