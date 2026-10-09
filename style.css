@@ -1,0 +1,129 @@
+/* 入戏生图 面板样式（极简、不花哨） */
+#ruxi-imagegen-root {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', Roboto, sans-serif;
+  padding: 16px;
+  color: #1a1a18;
+  max-width: 520px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.ruxi-ig__title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.ruxi-ig__field {
+  margin-top: 12px;
+}
+
+.ruxi-ig__label {
+  display: block;
+  font-size: 12px;
+  color: #6b6b64;
+  margin-bottom: 4px;
+}
+
+.ruxi-ig__input,
+.ruxi-ig__textarea,
+.ruxi-ig__num {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 13px;
+  border: 1px solid #d8d8d2;
+  border-radius: 6px;
+  background: #fff;
+  color: #1a1a18;
+  outline: none;
+}
+
+.ruxi-ig__input:focus,
+.ruxi-ig__textarea:focus,
+.ruxi-ig__num:focus {
+  border-color: #1a1a18;
+}
+
+.ruxi-ig__textarea {
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.ruxi-ig__row {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  align-items: center;
+}
+
+.ruxi-ig__row--between {
+  justify-content: space-between;
+}
+
+.ruxi-ig__row .ruxi-ig__input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ruxi-ig__check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ruxi-ig__num {
+  width: 64px;
+  flex: none;
+}
+
+.ruxi-ig__btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid #d8d8d2;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  margin-top: 12px;
+  margin-right: 8px;
+}
+
+.ruxi-ig__btn--primary {
+  background: #1a1a18;
+  color: #fff;
+  border-color: #1a1a18;
+}
+
+.ruxi-ig__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ruxi-ig__status {
+  min-height: 18px;
+  font-size: 12px;
+  color: #3a3a36;
+  margin-top: 10px;
+  word-break: break-all;
+}
+
+.ruxi-ig__status--error {
+  color: #c0392b;
+}
+
+.ruxi-ig__preview {
+  display: none;
+  margin-top: 12px;
+}
+
+.ruxi-ig__img {
+  max-width: 100%;
+  max-height: 260px;
+  border-radius: 8px;
+  border: 1px solid #e3e3dd;
+  display: block;
+}

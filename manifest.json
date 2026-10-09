@@ -1,0 +1,8 @@
+{
+  "name": "入戏生图",
+  "version": "1.0.0",
+  "description": "在入戏（ai-rp-chat）中配置生图接口，读取当前对话上下文生成图片并插入对话正文。",
+  "author": "RPHUB",
+  "js": "index.js",
+  "css": ["style.css"]
+}
