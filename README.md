@@ -82,7 +82,9 @@ scripts/selftest.js  开发自验脚本（node，不参与扩展运行时）
 ## 自验
 
 ```bash
-node scripts/selftest.js
+node scripts/selftest.js           # manifest 入口解析 + API 调用写法核对 + 纯函数断言
+node scripts/integration.test.js   # 本地 mock 服务端到端（OpenAI / 通用 / GET 回退）
+node scripts/refill.test.js        # 设置回填时序（getSettings 异步回填 → 表单回填）
 ```
 
-脚本会核对 manifest 入口解析、入口脚本对宿主 API 的调用写法、以及纯函数区（占位符替换 / 协议判定 / 图片提取 / base64 归一化）对固定输入的输出。
+`selftest.js` 核对 manifest 入口解析、入口脚本对宿主 API 的调用写法、以及纯函数区（占位符替换 / 协议判定 / 图片提取 / base64 归一化）对固定输入的输出；`refill.test.js` 真正执行 `index.js`，模拟「boot 先渲染（settings 为空）→ getSettings 异步回填 → APP_READY / 300ms 兜底触发 `syncFormFromSettings`」的时序，断言表单控件值回填正确且不打断正在编辑的字段。

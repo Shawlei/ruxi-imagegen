@@ -241,6 +241,46 @@
     els.generate.textContent = b ? '生成中…' : '生成'
   }
 
+  // ---- 表单回填（幂等）----
+  function isFocused(node) {
+    try {
+      return !!node && document.activeElement === node
+    } catch (e) {
+      return false
+    }
+  }
+
+  // 写入文本类控件（input/text/textarea/number/select 共用 .value）
+  function setText(node, value) {
+    if (!node || isFocused(node)) return // 正在编辑的字段不打断
+    var v = value == null ? '' : String(value)
+    if (node.value !== v) node.value = v
+  }
+
+  function setChecked(node, value) {
+    if (!node || isFocused(node)) return
+    var b = !!value
+    if (node.checked !== b) node.checked = b
+  }
+
+  /**
+   * 把当前 settings 写回表单控件（幂等，可安全多次调用）。
+   * settings 引用 EXT_SETTINGS_CACHE 的同一对象：boot 的 getSettings 异步回填会
+   * 直接反映到 settings，本函数即可在任意时序把已存配置同步到 UI。
+   */
+  function syncFormFromSettings() {
+    if (!els.url) return // 表单尚未构建时安全跳过
+    var s = settings
+    setText(els.url, s.apiUrl)
+    setText(els.protocol, s.protocol)
+    setText(els.key, s.apiKey)
+    setText(els.model, s.model)
+    setText(els.size, s.size)
+    setText(els.template, s.promptTemplate)
+    setChecked(els.includeContext, s.includeContext)
+    setText(els.contextCount, s.contextCount)
+  }
+
   // ---- 面板 UI ----
   function buildUI() {
     var root = el('div', { id: 'ruxi-imagegen-root', class: 'ruxi-ig' })
@@ -464,4 +504,11 @@
   }
 
   buildUI()
+  syncFormFromSettings() // 时机 1：构建后立即回填一次
+  API.eventSource.on('APP_READY', function () {
+    syncFormFromSettings() // 时机 2：宿主就绪（与 getSettings 回填先后不稳定，故不能只靠它）
+  })
+  setTimeout(function () {
+    syncFormFromSettings() // 时机 3：兜底再回填一次（幂等，无害）
+  }, 300)
 })()
